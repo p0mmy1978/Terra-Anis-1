@@ -1,6 +1,18 @@
 # ansible-vm.tf
 
 # -------------------------
+# Public IP
+# -------------------------
+resource "azurerm_public_ip" "ansible_pip" {
+  name                = "ansible-vm-pip"
+  location            = azurerm_virtual_network.core_vnet.location
+  resource_group_name = azurerm_resource_group.rg.name
+  allocation_method   = "Static"
+  sku                 = "Standard"
+  tags                = var.tags
+}
+
+# -------------------------
 # Network Interface
 # -------------------------
 resource "azurerm_network_interface" "ansible_nic" {
@@ -12,13 +24,53 @@ resource "azurerm_network_interface" "ansible_nic" {
     name                          = "internal"
     subnet_id                     = azurerm_subnet.shared_services_subnet.id
     private_ip_address_allocation = "Dynamic"
+    public_ip_address_id          = azurerm_public_ip.ansible_pip.id
   }
 
   tags = var.tags
 }
 
 # -------------------------
-# Ubuntu VM with SSH Key
+# Cloud-init configuration
+# -------------------------
+data "cloudinit_config" "ansible_init" {
+  gzip          = true
+  base64_encode = true
+
+  part {
+    content_type = "text/cloud-config"
+    content = yamlencode({
+      package_update  = true
+      package_upgrade = true
+
+      packages = [
+        "software-properties-common",
+        "python3-pip",
+        "git"
+      ]
+
+      runcmd = [
+        # Add Ansible PPA and install
+        "add-apt-repository --yes --update ppa:ansible/ansible",
+        "apt install -y ansible",
+        
+        # Generate SSH key for ansible user
+        "sudo -u azure_user ssh-keygen -t rsa -b 4096 -f /home/azure_user/.ssh/id_rsa -N '' -C 'ansible@azure'",
+        "sudo -u azure_user chmod 600 /home/azure_user/.ssh/id_rsa",
+        "sudo -u azure_user chmod 644 /home/azure_user/.ssh/id_rsa.pub",
+        
+        # Create ansible config directory
+        "sudo -u azure_user mkdir -p /home/azure_user/ansible",
+        
+        # Log completion
+        "echo 'Ansible installation completed' > /var/log/cloud-init-complete.log"
+      ]
+    })
+  }
+}
+
+# -------------------------
+# Ubuntu VM with SSH Key & Cloud-Init
 # -------------------------
 resource "azurerm_linux_virtual_machine" "ansible_vm" {
   name                = "Ansible-VM-01"
@@ -50,13 +102,25 @@ resource "azurerm_linux_virtual_machine" "ansible_vm" {
     version   = "latest"
   }
 
+  custom_data = data.cloudinit_config.ansible_init.rendered
+
   tags = var.tags
 }
 
 # -------------------------
-# Output the private IP
+# Outputs
 # -------------------------
 output "ansible_vm_private_ip" {
   value       = azurerm_network_interface.ansible_nic.private_ip_address
   description = "Private IP of Ansible VM"
+}
+
+output "ansible_vm_public_ip" {
+  value       = azurerm_public_ip.ansible_pip.ip_address
+  description = "Public IP of Ansible VM"
+}
+
+output "ansible_vm_ssh_command" {
+  value       = "ssh -i keys/ansible_rsa azure_user@${azurerm_public_ip.ansible_pip.ip_address}"
+  description = "SSH command to connect to Ansible VM"
 }
