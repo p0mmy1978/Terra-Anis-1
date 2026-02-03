@@ -18,21 +18,25 @@ resource "azurerm_network_interface" "ansible_nic" {
 }
 
 # -------------------------
-# Ubuntu VM
+# Ubuntu VM with SSH Key
 # -------------------------
 resource "azurerm_linux_virtual_machine" "ansible_vm" {
   name                = "Ansible-VM-01"
   resource_group_name = azurerm_resource_group.rg.name
   location            = azurerm_virtual_network.core_vnet.location
   size                = "Standard_B2s"
-  admin_username      = "azureadmin"
+  admin_username      = "azure_user"
 
   network_interface_ids = [
     azurerm_network_interface.ansible_nic.id,
   ]
 
-  admin_password                  = "plschgme123!"
-  disable_password_authentication = false
+  disable_password_authentication = true
+
+  admin_ssh_key {
+    username   = "azure_user"
+    public_key = file("${path.module}/keys/ansible_rsa.pub")
+  }
 
   os_disk {
     caching              = "ReadWrite"
