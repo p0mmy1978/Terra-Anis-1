@@ -39,38 +39,14 @@ data "cloudinit_config" "ansible_init" {
 
   part {
     content_type = "text/cloud-config"
-    content = yamlencode({
-      package_update  = true
-      package_upgrade = true
-
-      packages = [
-        "software-properties-common",
-        "python3-pip",
-        "git"
-      ]
-
-      runcmd = [
-        # Add Ansible PPA and install
-        "add-apt-repository --yes --update ppa:ansible/ansible",
-        "apt install -y ansible",
-        
-        # Generate SSH key for ansible user
-        "sudo -u azure_user ssh-keygen -t rsa -b 4096 -f /home/azure_user/.ssh/id_rsa -N '' -C 'ansible@azure'",
-        "sudo -u azure_user chmod 600 /home/azure_user/.ssh/id_rsa",
-        "sudo -u azure_user chmod 644 /home/azure_user/.ssh/id_rsa.pub",
-        
-        # Create ansible config directory
-        "sudo -u azure_user mkdir -p /home/azure_user/ansible",
-        
-        # Log completion
-        "echo 'Ansible installation completed' > /var/log/cloud-init-complete.log"
-      ]
+    content = templatefile("${path.module}/cloud-init/ansible-init.yaml", {
+      key_vault_name = azurerm_key_vault.lab_kv.name
     })
   }
 }
 
 # -------------------------
-# Ubuntu VM with SSH Key & Cloud-Init
+# Ubuntu VM with Managed Identity
 # -------------------------
 resource "azurerm_linux_virtual_machine" "ansible_vm" {
   name                = "Ansible-VM-01"
@@ -88,6 +64,11 @@ resource "azurerm_linux_virtual_machine" "ansible_vm" {
   admin_ssh_key {
     username   = "azure_user"
     public_key = file("${path.module}/keys/ansible_rsa.pub")
+  }
+
+  # Enable System Assigned Managed Identity
+    identity {
+    type = "SystemAssigned"
   }
 
   os_disk {
@@ -124,3 +105,8 @@ output "ansible_vm_ssh_command" {
   value       = "ssh -i keys/ansible_rsa azure_user@${azurerm_public_ip.ansible_pip.ip_address}"
   description = "SSH command to connect to Ansible VM"
 }
+
+#output "ansible_vm_managed_identity" {
+# value       = azurerm_linux_virtual_machine.ansible_vm.identity[0].principal_id
+#  description = "Managed Identity Principal ID"
+#}
