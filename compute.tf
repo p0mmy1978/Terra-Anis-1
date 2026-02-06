@@ -1,0 +1,81 @@
+# compute.tf
+
+# -------------------------
+# Get Ansible public key from Key Vault
+# -------------------------
+data "azurerm_key_vault_secret" "ansible_pubkey" {
+  name         = "ansible-public-key"
+  key_vault_id = azurerm_key_vault.lab_kv.id
+
+  depends_on = [
+    azurerm_linux_virtual_machine.ansible_vm,
+    azurerm_key_vault_access_policy.ansible_vm
+  ]
+}
+
+# -------------------------
+# Network Interface
+# -------------------------
+resource "azurerm_network_interface" "web_nic" {
+  name                = "web-server-nic"
+  location            = azurerm_virtual_network.core_vnet.location
+  resource_group_name = azurerm_resource_group.rg.name
+
+  ip_configuration {
+    name                          = "internal"
+    subnet_id                     = azurerm_subnet.public_web_subnet.id
+    private_ip_address_allocation = "Dynamic"
+  }
+
+  tags = var.tags
+}
+
+# -------------------------
+# Ubuntu Web Server VM
+# -------------------------
+resource "azurerm_linux_virtual_machine" "web_vm" {
+  name                = "WebServer-01"
+  resource_group_name = azurerm_resource_group.rg.name
+  location            = azurerm_virtual_network.core_vnet.location
+  size                = "Standard_B2s"
+  admin_username      = "azure_user"
+
+  network_interface_ids = [
+    azurerm_network_interface.web_nic.id,
+  ]
+
+  disable_password_authentication = true
+
+  # Use Ansible's public key from Key Vault
+  admin_ssh_key {
+    username   = "azure_user"
+    public_key = data.azurerm_key_vault_secret.ansible_pubkey.value
+  }
+
+  os_disk {
+    caching              = "ReadWrite"
+    storage_account_type = "Standard_LRS"
+  }
+
+  source_image_reference {
+    publisher = "Canonical"
+    offer     = "0001-com-ubuntu-server-jammy"
+    sku       = "22_04-lts-gen2"
+    version   = "latest"
+  }
+
+  tags = var.tags
+}
+
+# -------------------------
+# Outputs
+# -------------------------
+output "web_vm_private_ip" {
+  value       = azurerm_network_interface.web_nic.private_ip_address
+  description = "Private IP of Web Server"
+}
+
+output "web_vm_fqdn" {
+  value       = "${azurerm_linux_virtual_machine.web_vm.name}.azure.poms.tech"
+  description = "DNS name in private DNS zone"
+}
