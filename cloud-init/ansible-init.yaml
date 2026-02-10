@@ -1,0 +1,156 @@
+#cloud-config
+package_update: true
+package_upgrade: true
+
+packages:
+  - software-properties-common
+  - python3-pip
+  - git
+  - jq
+  - net-tools
+
+runcmd:
+  # Install Ansible
+  - add-apt-repository --yes --update ppa:ansible/ansible
+  - apt install -y ansible
+  
+  # Generate SSH key for Ansible
+  - sudo -u azure_user ssh-keygen -t rsa -b 4096 -f /home/azure_user/.ssh/id_rsa -N '' -C 'ansible@azure'
+  - sudo -u azure_user chmod 600 /home/azure_user/.ssh/id_rsa
+  - sudo -u azure_user chmod 644 /home/azure_user/.ssh/id_rsa.pub
+  
+  # Install Azure CLI
+  - curl -sL https://aka.ms/InstallAzureCLIDeb | bash
+  
+  # Wait for managed identity to be ready
+  - sleep 30
+  
+  # Login with managed identity
+  - az login --identity
+  
+  # Upload public key to Key Vault
+  - |
+    PUBKEY=$(cat /home/azure_user/.ssh/id_rsa.pub)
+    az keyvault secret set \
+      --vault-name "${key_vault_name}" \
+      --name "ansible-public-key" \
+      --value "$PUBKEY" \
+      --output none
+  
+  # Create ansible directory and fix permissions
+  - sudo -u azure_user mkdir -p /home/azure_user/ansible
+  - chown -R azure_user:azure_user /home/azure_user/ansible
+  - chmod 644 /home/azure_user/ansible/inventory.ini
+  - chmod 644 /home/azure_user/ansible/deploy-nginx.yml
+  
+  # Log completion
+  - echo "Ansible installation and Key Vault upload completed at $(date)" > /var/log/cloud-init-complete.log
+
+write_files:
+  - path: /etc/profile.d/keyvault-info.sh
+    content: |
+      echo "Key Vault Name: ${key_vault_name}"
+      echo "Ansible public key stored in Key Vault secret: ansible-public-key"
+  
+  - path: /home/azure_user/ansible/inventory.ini
+    permissions: '0644'
+    content: |
+      [webservers]
+      # Hosts will be added here automatically by Terraform
+  
+  - path: /home/azure_user/ansible/deploy-nginx.yml
+    permissions: '0644'
+    content: |
+      ---
+      - name: Deploy Nginx Web Server with Custom Page
+        hosts: webservers
+        become: yes
+        tasks:
+          - name: Update apt cache
+            apt:
+              update_cache: yes
+              cache_valid_time: 3600
+
+          - name: Install nginx
+            apt:
+              name: nginx
+              state: present
+
+          - name: Start and enable nginx
+            systemd:
+              name: nginx
+              state: started
+              enabled: yes
+
+          - name: Create custom index.html
+            copy:
+              content: |
+                <!DOCTYPE html>
+                <html lang="en">
+                <head>
+                    <meta charset="UTF-8">
+                    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                    <title>Hello from Azure!</title>
+                    <style>
+                        body {
+                            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                            display: flex;
+                            justify-content: center;
+                            align-items: center;
+                            height: 100vh;
+                            margin: 0;
+                        }
+                        .container {
+                            background: white;
+                            padding: 50px;
+                            border-radius: 10px;
+                            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+                            text-align: center;
+                        }
+                        h1 {
+                            color: #0078d4;
+                            font-size: 3em;
+                            margin-bottom: 20px;
+                        }
+                        p {
+                            color: #333;
+                            font-size: 1.2em;
+                            line-height: 1.6;
+                        }
+                        .info {
+                            background: #f0f0f0;
+                            padding: 20px;
+                            border-radius: 5px;
+                            margin-top: 20px;
+                        }
+                    </style>
+                </head>
+                <body>
+                    <div class="container">
+                        <h1>🚀 Hello from Azure!</h1>
+                        <p>This web server was deployed using:</p>
+                        <div class="info">
+                            <p><strong>Infrastructure:</strong> Terraform</p>
+                            <p><strong>Configuration:</strong> Ansible</p>
+                            <p><strong>Cloud:</strong> Microsoft Azure</p>
+                            <p><strong>Network:</strong> Multi-region VNet peering</p>
+                            <p><strong>Server:</strong> {{ ansible_hostname }}</p>
+                            <p><strong>Private IP:</strong> {{ ansible_default_ipv4.address }}</p>
+                        </div>
+                        <p style="margin-top: 30px;">
+                            <em>Automated DevOps deployment by Adrian Baker</em><br>
+                            <a href="https://aibots.poms.tech" style="color: #0078d4;">aibots.poms.tech</a>
+                        </p>
+                    </div>
+                </body>
+                </html>
+              dest: /var/www/html/index.html
+              owner: www-data
+              group: www-data
+              mode: '0644'
+
+          - name: Restart nginx to apply changes
+            systemd:
+              name: nginx
+              state: restarted

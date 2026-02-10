@@ -68,6 +68,37 @@ resource "azurerm_linux_virtual_machine" "web_vm" {
 }
 
 # -------------------------
+# Auto-register VM in Ansible inventory
+# -------------------------
+resource "null_resource" "register_web_vm" {
+  depends_on = [
+    azurerm_linux_virtual_machine.web_vm,
+    azurerm_linux_virtual_machine.ansible_vm
+  ]
+
+  # Re-run if the web VM's private IP changes
+  triggers = {
+    web_vm_ip = azurerm_network_interface.web_nic.private_ip_address
+  }
+
+  connection {
+    type        = "ssh"
+    host        = azurerm_public_ip.ansible_pip.ip_address
+    user        = "azure_user"
+    private_key = file("${path.module}/keys/ansible_rsa")
+    timeout     = "5m"
+  }
+
+  provisioner "remote-exec" {
+    inline = [
+      # Add the web server to the inventory if not already present
+      "grep -qxF '${azurerm_network_interface.web_nic.private_ip_address} ansible_user=azure_user' /home/azure_user/ansible/inventory.ini || echo '${azurerm_network_interface.web_nic.private_ip_address} ansible_user=azure_user' >> /home/azure_user/ansible/inventory.ini",
+      "echo 'Registered WebServer-01 (${azurerm_network_interface.web_nic.private_ip_address}) in Ansible inventory'"
+    ]
+  }
+}
+
+# -------------------------
 # Outputs
 # -------------------------
 output "web_vm_private_ip" {
