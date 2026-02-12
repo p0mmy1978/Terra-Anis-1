@@ -44,7 +44,8 @@ runcmd:
   - chown -R azure_user:azure_user /home/azure_user/ansible
   - chown azure_user:azure_user /home/azure_user/.bash_aliases
   - cp /etc/skel/.bashrc /home/azure_user/.bashrc
-  - chown azure_user:azure_user /home/azure_user/.bashrc
+  - cp /etc/skel/.profile /home/azure_user/.profile
+  - chown azure_user:azure_user /home/azure_user/.bashrc /home/azure_user/.profile
 
   # Log completion
   - echo "Ansible installation and Key Vault upload completed at $(date)" > /var/log/cloud-init-complete.log
@@ -56,6 +57,13 @@ write_files:
       alias ll='ls -alF'
       alias la='ls -A'
       alias l='ls -CF'
+
+  - path: /home/azure_user/ansible/ansible.cfg
+    permissions: '0644'
+    content: |
+      [defaults]
+      host_key_checking = False
+      inventory = inventory.ini
 
   - path: /etc/profile.d/keyvault-info.sh
     content: |
@@ -73,7 +81,7 @@ write_files:
     content: |
       ---
       - name: Deploy Nginx Web Server with Custom Page
-        hosts: webservers
+        hosts: all
         become: yes
         tasks:
           - name: Update apt cache

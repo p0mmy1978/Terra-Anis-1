@@ -125,6 +125,88 @@ resource "null_resource" "register_web_vm" {
 }
 
 # -------------------------
+# Database Server - Network Interface
+# -------------------------
+resource "azurerm_network_interface" "db_nic" {
+  name                = "db-server-nic"
+  location            = azurerm_virtual_network.core_vnet.location
+  resource_group_name = azurerm_resource_group.rg.name
+
+  ip_configuration {
+    name                          = "internal"
+    subnet_id                     = azurerm_subnet.database_subnet.id
+    private_ip_address_allocation = "Dynamic"
+  }
+
+  tags = var.tags
+}
+
+# -------------------------
+# Ubuntu Database Server VM
+# -------------------------
+resource "azurerm_linux_virtual_machine" "db_vm" {
+  name                = "DatabaseServer-01"
+  resource_group_name = azurerm_resource_group.rg.name
+  location            = azurerm_virtual_network.core_vnet.location
+  size                = "Standard_B2s"
+  admin_username      = "azure_user"
+
+  network_interface_ids = [
+    azurerm_network_interface.db_nic.id,
+  ]
+
+  disable_password_authentication = true
+
+  admin_ssh_key {
+    username   = "azure_user"
+    public_key = data.azurerm_key_vault_secret.ansible_pubkey.value
+  }
+
+  os_disk {
+    caching              = "ReadWrite"
+    storage_account_type = "Standard_LRS"
+  }
+
+  source_image_reference {
+    publisher = "Canonical"
+    offer     = "0001-com-ubuntu-server-jammy"
+    sku       = "22_04-lts-gen2"
+    version   = "latest"
+  }
+
+  tags = var.tags
+}
+
+# -------------------------
+# Auto-register Database VM in Ansible inventory
+# -------------------------
+resource "null_resource" "register_db_vm" {
+  depends_on = [
+    azurerm_linux_virtual_machine.db_vm,
+    azurerm_linux_virtual_machine.ansible_vm
+  ]
+
+  triggers = {
+    db_vm_name = azurerm_linux_virtual_machine.db_vm.name
+  }
+
+  connection {
+    type        = "ssh"
+    host        = azurerm_public_ip.ansible_pip.ip_address
+    user        = "azure_user"
+    private_key = file("${path.module}/keys/ansible_rsa")
+    timeout     = "5m"
+  }
+
+  provisioner "remote-exec" {
+    inline = [
+      "grep -qxF '${lower(azurerm_linux_virtual_machine.db_vm.name)}.azure.poms.tech ansible_user=azure_user' /home/azure_user/ansible/inventory.ini || echo '${lower(azurerm_linux_virtual_machine.db_vm.name)}.azure.poms.tech ansible_user=azure_user' >> /home/azure_user/ansible/inventory.ini",
+      "echo 'Registered ${azurerm_linux_virtual_machine.db_vm.name} (${lower(azurerm_linux_virtual_machine.db_vm.name)}.azure.poms.tech) in Ansible inventory'"
+    ]
+  }
+}
+
+# -------------------------
 # Outputs
 # -------------------------
 output "web_vm_private_ip" {
@@ -134,5 +216,15 @@ output "web_vm_private_ip" {
 
 output "web_vm_fqdn" {
   value       = "${azurerm_linux_virtual_machine.web_vm.name}.azure.poms.tech"
+  description = "DNS name in private DNS zone"
+}
+
+output "db_vm_private_ip" {
+  value       = azurerm_network_interface.db_nic.private_ip_address
+  description = "Private IP of Database Server"
+}
+
+output "db_vm_fqdn" {
+  value       = "${azurerm_linux_virtual_machine.db_vm.name}.azure.poms.tech"
   description = "DNS name in private DNS zone"
 }
