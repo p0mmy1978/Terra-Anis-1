@@ -10,6 +10,9 @@ packages:
   - net-tools
 
 runcmd:
+  # Fix home directory ownership (cloud-init runs as root and can change it)
+  - chown azure_user:azure_user /home/azure_user
+
   # Install Ansible
   - add-apt-repository --yes --update ppa:ansible/ansible
   - apt install -y ansible
@@ -25,8 +28,8 @@ runcmd:
   # Wait for managed identity to be ready
   - sleep 30
   
-  # Login with managed identity
-  - az login --identity
+  # Login with managed identity (no subscription role needed, just Key Vault access)
+  - az login --identity --allow-no-subscriptions
   
   # Upload public key to Key Vault
   - |
@@ -37,16 +40,23 @@ runcmd:
       --value "$PUBKEY" \
       --output none
   
-  # Create ansible directory and fix permissions
-  - sudo -u azure_user mkdir -p /home/azure_user/ansible
+  # Fix ownership for azure_user files created by cloud-init as root
   - chown -R azure_user:azure_user /home/azure_user/ansible
-  - chmod 644 /home/azure_user/ansible/inventory.ini
-  - chmod 644 /home/azure_user/ansible/deploy-nginx.yml
-  
+  - chown azure_user:azure_user /home/azure_user/.bash_aliases
+  - cp /etc/skel/.bashrc /home/azure_user/.bashrc
+  - chown azure_user:azure_user /home/azure_user/.bashrc
+
   # Log completion
   - echo "Ansible installation and Key Vault upload completed at $(date)" > /var/log/cloud-init-complete.log
 
 write_files:
+  - path: /home/azure_user/.bash_aliases
+    permissions: '0644'
+    content: |
+      alias ll='ls -alF'
+      alias la='ls -A'
+      alias l='ls -CF'
+
   - path: /etc/profile.d/keyvault-info.sh
     content: |
       echo "Key Vault Name: ${key_vault_name}"
@@ -71,9 +81,11 @@ write_files:
               update_cache: yes
               cache_valid_time: 3600
 
-          - name: Install nginx
+          - name: Install packages
             apt:
-              name: nginx
+              name:
+                - nginx
+                - net-tools
               state: present
 
           - name: Start and enable nginx

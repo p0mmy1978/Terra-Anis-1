@@ -1,6 +1,33 @@
 # compute.tf
 
 # -------------------------
+# Wait for cloud-init to finish on Ansible VM
+# (ensures SSH key is uploaded to Key Vault)
+# -------------------------
+resource "null_resource" "wait_for_cloud_init" {
+  depends_on = [
+    azurerm_linux_virtual_machine.ansible_vm,
+    azurerm_key_vault_access_policy.ansible_vm
+  ]
+
+  connection {
+    type        = "ssh"
+    host        = azurerm_public_ip.ansible_pip.ip_address
+    user        = "azure_user"
+    private_key = file("${path.module}/keys/ansible_rsa")
+    timeout     = "10m"
+  }
+
+  provisioner "remote-exec" {
+    inline = [
+      "echo 'Waiting for cloud-init to complete...'",
+      "cloud-init status --wait",
+      "echo 'Cloud-init finished.'"
+    ]
+  }
+}
+
+# -------------------------
 # Get Ansible public key from Key Vault
 # -------------------------
 data "azurerm_key_vault_secret" "ansible_pubkey" {
@@ -8,8 +35,7 @@ data "azurerm_key_vault_secret" "ansible_pubkey" {
   key_vault_id = azurerm_key_vault.lab_kv.id
 
   depends_on = [
-    azurerm_linux_virtual_machine.ansible_vm,
-    azurerm_key_vault_access_policy.ansible_vm
+    null_resource.wait_for_cloud_init
   ]
 }
 
@@ -76,9 +102,9 @@ resource "null_resource" "register_web_vm" {
     azurerm_linux_virtual_machine.ansible_vm
   ]
 
-  # Re-run if the web VM's private IP changes
+  # Re-run if the web VM's name changes
   triggers = {
-    web_vm_ip = azurerm_network_interface.web_nic.private_ip_address
+    web_vm_name = azurerm_linux_virtual_machine.web_vm.name
   }
 
   connection {
@@ -91,9 +117,9 @@ resource "null_resource" "register_web_vm" {
 
   provisioner "remote-exec" {
     inline = [
-      # Add the web server to the inventory if not already present
-      "grep -qxF '${azurerm_network_interface.web_nic.private_ip_address} ansible_user=azure_user' /home/azure_user/ansible/inventory.ini || echo '${azurerm_network_interface.web_nic.private_ip_address} ansible_user=azure_user' >> /home/azure_user/ansible/inventory.ini",
-      "echo 'Registered WebServer-01 (${azurerm_network_interface.web_nic.private_ip_address}) in Ansible inventory'"
+      # Add the web server to the inventory using DNS name
+      "grep -qxF '${lower(azurerm_linux_virtual_machine.web_vm.name)}.azure.poms.tech ansible_user=azure_user' /home/azure_user/ansible/inventory.ini || echo '${lower(azurerm_linux_virtual_machine.web_vm.name)}.azure.poms.tech ansible_user=azure_user' >> /home/azure_user/ansible/inventory.ini",
+      "echo 'Registered ${azurerm_linux_virtual_machine.web_vm.name} (${lower(azurerm_linux_virtual_machine.web_vm.name)}.azure.poms.tech) in Ansible inventory'"
     ]
   }
 }
