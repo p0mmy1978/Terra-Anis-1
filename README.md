@@ -40,6 +40,16 @@ Built as a showcase for automated networking in Azure. The goal is a plug-and-pl
 - Terraform installed
 - SSH keypair in `keys/ansible_rsa` and `keys/ansible_rsa.pub`
 
+## Before You Deploy: Update the NSG
+
+Update the NSG rule in `nsg.tf` with your real public IP address to allow SSH access to the Ansible VM:
+
+```hcl
+source_address_prefix = "YOUR.PUBLIC.IP/32"
+```
+
+You can find your public IP by running `curl ifconfig.me`.
+
 ## Step 1: Deploy the Infrastructure
 
 ```bash
