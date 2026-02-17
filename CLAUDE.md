@@ -9,6 +9,9 @@ Terraform + Ansible automation project for YouTube/CV showcase. Deploys a multi-
 - **3 VNets**: CoreServicesVnet (hub), ManufacturingVnet, ResearchVnet — peered hub-and-spoke
 - **Private DNS Zone**: azure.poms.tech with auto-registration enabled on all VNets
 - **Key Vault**: Stores Ansible SSH public key, accessed via managed identity
+- **NAT Gateways**: One per VNet/region — core-nat-gateway (East US), mfg-nat-gateway (West Europe), research-nat-gateway (Southeast Asia). All subnets associated.
+- **Internal Load Balancer**: Standard SKU in PublicWebServiceSubnet, distributes HTTP to WebServer-01 + DatabaseServer-01. DNS: loadbalancer.azure.poms.tech
+- **NSG**: ansible-vm-nsg on Ansible VM NIC, allows SSH from a specific IP only
 
 ## Key Files
 - `ansible-vm.tf` - Ansible control VM with public IP, managed identity, cloud-init
@@ -18,7 +21,9 @@ Terraform + Ansible automation project for YouTube/CV showcase. Deploys a multi-
 - `peering.tf` - Hub-spoke VNet peering
 - `dns.tf` - Private DNS zone and VNet links
 - `key-vault.tf` - Key Vault with access policies
-- `nsg.tf` - Network security groups
+- `nsg.tf` - Network security group (SSH access restriction for Ansible VM)
+- `nat-gateway.tf` - NAT gateways for all 3 VNets (outbound internet)
+- `lb.tf` - Internal load balancer with health probes and DNS record
 - `keys/` - SSH keypair for accessing Ansible VM from local machine
 
 ## Deploy Flow

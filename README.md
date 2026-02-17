@@ -1,6 +1,6 @@
 # Terra-Anis-1: Automated Azure Multi-Region Network
 
-Automated deployment of a multi-region Azure network using **Terraform** and **Ansible**. One `terraform apply` builds the entire infrastructure — 3 VNets, hub-and-spoke peering, private DNS, and VMs in every subnet — then Ansible configures them all from a central control node.
+Automated deployment of a multi-region Azure network using **Terraform** and **Ansible**. One `terraform apply` builds the entire infrastructure — 3 VNets, hub-and-spoke peering, private DNS, NAT gateways, an internal load balancer, and VMs in every subnet — then Ansible configures them all from a central control node.
 
 Built as a showcase for automated networking in Azure. The goal is a plug-and-play network that can be extended with NVAs, web proxies, firewalls, or any other networking components.
 
@@ -10,20 +10,24 @@ Built as a showcase for automated networking in Azure. The goal is a plug-and-pl
                         ┌─────────────────────────────────────┐
                         │     CoreServicesVnet (East US)       │
                         │           10.20.0.0/16               │
+                        │       NAT GW: core-nat-gateway       │
                         │                                      │
                         │  SharedServices  ── Ansible-VM-01    │
-                        │  Database        ── DatabaseServer-01│
-                        │  PublicWeb       ── WebServer-01     │
-                        └──────────┬──────────┬────────────────┘
-                                   │          │
-                          Peering  │          │  Peering
-                                   │          │
+                        │  Database        ── DatabaseServer-01│◄─┐
+                        │  PublicWeb       ── WebServer-01     │◄─┤ Internal LB
+                        │                                      │  │ loadbalancer.azure.poms.tech
+                        │  NSG: allow-ssh-from-home (port 22)  │  │
+                        └──────────┬──────────┬────────────────┘  │
+                                   │          │                    │
+                          Peering  │          │  Peering           │
+                                   │          │                    │
           ┌────────────────────────┘          └────────────────────────┐
           │                                                           │
 ┌─────────┴───────────────────┐                     ┌─────────────────┴─────────┐
 │  ManufacturingVnet          │                     │  ResearchVnet             │
 │  (West Europe)              │                     │  (Southeast Asia)         │
 │  10.30.0.0/16               │                     │  10.40.0.0/16             │
+│  NAT GW: mfg-nat-gateway    │                     │  NAT GW: research-nat-gw  │
 │                             │                     │                           │
 │  MfgSystems ── MfgServer-01 │                     │  Research ── ResearchSvr  │
 │  Sensor1 ── SensorServer-01 │                     └───────────────────────────┘
@@ -33,6 +37,30 @@ Built as a showcase for automated networking in Azure. The goal is a plug-and-pl
 ```
 
 **Private DNS Zone:** `azure.poms.tech` — all VMs auto-register and are reachable by hostname.
+
+## Network Security
+
+An NSG (`ansible-vm-nsg`) is attached to the Ansible VM NIC, allowing inbound SSH (port 22) only from a specific IP address. Update `nsg.tf` with your public IP before deploying (see below). All other VMs have no public IP and are only reachable internally via the hub-and-spoke peering.
+
+## NAT Gateways
+
+Each VNet has its own NAT gateway for outbound internet access (NAT gateways are regional resources):
+
+| VNet | NAT Gateway | Subnets |
+|------|------------|---------|
+| CoreServicesVnet (East US) | `core-nat-gateway` | SharedServices, PublicWebService, Database |
+| ManufacturingVnet (West Europe) | `mfg-nat-gateway` | ManufacturingSystems, Sensor1, Sensor2, Sensor3 |
+| ResearchVnet (Southeast Asia) | `research-nat-gateway` | ResearchSystem |
+
+The Ansible VM has both a public IP (for inbound SSH) and a NAT gateway (for outbound internet). Azure uses the public IP for inbound and the NAT gateway for outbound automatically.
+
+## Internal Load Balancer
+
+A Standard Internal Load Balancer (`internal-lb`) sits in the PublicWebServiceSubnet and distributes HTTP traffic across WebServer-01 and DatabaseServer-01. It is registered in private DNS as `loadbalancer.azure.poms.tech`.
+
+- **Health probe:** HTTP on port 80 with 5-second intervals
+- **Backend pool:** WebServer-01 + DatabaseServer-01
+- **Outbound SNAT disabled** — NAT gateway handles outbound traffic instead
 
 ## Prerequisites
 
@@ -104,7 +132,17 @@ curl researchserver-01.azure.poms.tech
 
 Each response will show the server hostname and private IP, confirming connectivity across all three regions via VNet peering.
 
-## Step 5: Tear Down
+## Step 5: Test the Load Balancer
+
+From the Ansible VM, send multiple requests to the load balancer to see traffic distributed across backend servers:
+
+```bash
+for i in {1..20}; do curl -s http://loadbalancer.azure.poms.tech | grep "Server:"; done
+```
+
+You should see responses alternating between WebServer-01 and DatabaseServer-01, confirming the load balancer is distributing traffic.
+
+## Step 6: Tear Down
 
 ```bash
 terraform destroy -auto-approve
@@ -120,6 +158,9 @@ Having all compute resources in a single `compute.tf` is not best practice for p
 - **Ansible** — Configuration Management
 - **Azure Key Vault** — Secure SSH key exchange between VMs
 - **Azure Private DNS** — Hostname resolution across VNets
+- **Azure NAT Gateway** — Outbound internet for all subnets across 3 regions
+- **Azure Load Balancer** — Internal HTTP load balancing with health probes
+- **NSG** — Network security group restricting SSH access by source IP
 - **Cloud-Init** — VM bootstrapping
 
 ---
