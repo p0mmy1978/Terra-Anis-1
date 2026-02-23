@@ -107,3 +107,10 @@ resource "azurerm_subnet" "bastion_subnet" {
   address_prefixes     = ["10.20.40.0/26"]
 }
 
+resource "azurerm_subnet" "appgw_subnet" {
+  name                 = "AppGatewaySubnet"
+  resource_group_name  = azurerm_resource_group.rg.name
+  virtual_network_name = azurerm_virtual_network.core_vnet.name
+  address_prefixes     = ["10.20.50.0/24"]
+}
+
