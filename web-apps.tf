@@ -1,4 +1,4 @@
-# web-apps.tf - Azure Web Apps in 3 regions (future Traffic Manager endpoints)
+# web-apps.tf - Azure Web Apps in 2 regions (Traffic Manager endpoints)
 
 # -------------------------
 # Random suffix for globally unique web app names
@@ -14,10 +14,6 @@ locals {
     centralus = {
       location    = "centralus"
       region_name = "Central US"
-    }
-    westeurope = {
-      location    = "westeurope"
-      region_name = "West Europe"
     }
     southeastasia = {
       location    = "southeastasia"
@@ -35,7 +31,7 @@ resource "azurerm_service_plan" "webapp_plan" {
   location            = each.value.location
   resource_group_name = azurerm_resource_group.rg.name
   os_type             = "Linux"
-  sku_name            = "S1"
+  sku_name            = "B1"
   tags                = var.tags
 }
 
@@ -80,18 +76,6 @@ resource "null_resource" "deploy_webapp" {
   provisioner "local-exec" {
     command = "cd ${path.module}/webapp && zip -r /tmp/webapp-${each.key}.zip . && az webapp deploy --resource-group ${azurerm_resource_group.rg.name} --name ${azurerm_linux_web_app.webapp[each.key].name} --src-path /tmp/webapp-${each.key}.zip --type zip"
   }
-}
-
-# -------------------------
-# Custom Domain Binding (Traffic Manager custom domain)
-# -------------------------
-resource "azurerm_app_service_custom_hostname_binding" "poms_custom_domain" {
-  for_each            = local.webapps
-  hostname            = "poms.trafficmanager.poms.tech"
-  app_service_name    = azurerm_linux_web_app.webapp[each.key].name
-  resource_group_name = azurerm_resource_group.rg.name
-
-  depends_on = [null_resource.deploy_webapp]
 }
 
 # -------------------------
